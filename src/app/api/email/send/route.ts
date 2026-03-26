@@ -6,13 +6,11 @@ import {
   type VitallyEmailData,
   type SideProjectEmailData,
 } from "@/lib/email/template";
+import { requireAuth } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  const expectedKey = process.env.API_SECRET;
-  if (expectedKey && authHeader !== `Bearer ${expectedKey}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = requireAuth(request);
+  if (authError) return authError;
 
   const body = await request.json();
   const { type, data } = body as {

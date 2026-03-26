@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { kv } from "@vercel/kv";
 import crypto from "crypto";
 
-const PAPERCLIP_API_URL = process.env.PAPERCLIP_API_URL;
-const PAPERCLIP_API_KEY = process.env.PAPERCLIP_API_KEY;
-const PAPERCLIP_COMPANY_ID = process.env.PAPERCLIP_COMPANY_ID;
-const PAPERCLIP_AGENT_ID = process.env.PAPERCLIP_AGENT_ID;
 const WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
+const INBOX_KEY = "email:inbox";
+const MAX_STORED = 100;
+
+interface StoredEmail {
+  id: string;
+  from: string;
+  subject: string;
+  body: string;
+  receivedAt: string;
+  read: boolean;
+}
 
 function parseReplyBody(text: string): string {
   if (!text) return "";
@@ -37,25 +45,10 @@ function verifySignature(
   return signatures.includes(expected);
 }
 
-async function paperclipRequest(
-  method: string,
-  path: string,
-  body?: Record<string, unknown>
-) {
-  const res = await fetch(`${PAPERCLIP_API_URL}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${PAPERCLIP_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return res.json();
-}
-
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
 
+  // Optional signature verification
   if (WEBHOOK_SECRET) {
     const svixId = request.headers.get("svix-id");
     const svixTimestamp = request.headers.get("svix-timestamp");
@@ -86,40 +79,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "empty reply" });
   }
 
-  if (!PAPERCLIP_API_URL || !PAPERCLIP_API_KEY || !PAPERCLIP_COMPANY_ID || !PAPERCLIP_AGENT_ID) {
-    console.error("Missing Paperclip env vars");
-    return NextResponse.json({ error: "Paperclip not configured" }, { status: 500 });
-  }
+  const email: StoredEmail = {
+    id: crypto.randomUUID(),
+    from,
+    subject,
+    body: replyContent,
+    receivedAt: new Date().toISOString(),
+    read: false,
+  };
 
-  // Find CEO's current in_progress task
-  const issues = await paperclipRequest(
-    "GET",
-    `/api/companies/${PAPERCLIP_COMPANY_ID}/issues?assigneeAgentId=${PAPERCLIP_AGENT_ID}&status=in_progress`
-  );
+  // Push to the front of the list
+  await kv.lpush(INBOX_KEY, JSON.stringify(email));
+  // Trim to keep only the most recent emails
+  await kv.ltrim(INBOX_KEY, 0, MAX_STORED - 1);
 
-  if (!Array.isArray(issues) || issues.length === 0) {
-    await paperclipRequest(
-      "POST",
-      `/api/companies/${PAPERCLIP_COMPANY_ID}/issues`,
-      {
-        title: `Email reply: ${subject}`,
-        description: `**From:** ${from}\n\n${replyContent}`,
-        status: "todo",
-        priority: "medium",
-        assigneeAgentId: PAPERCLIP_AGENT_ID,
-      }
-    );
-    return NextResponse.json({ status: "created task" });
-  }
-
-  const task = issues.sort(
-    (a: { updatedAt: string }, b: { updatedAt: string }) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  )[0];
-
-  await paperclipRequest("POST", `/api/issues/${task.id}/comments`, {
-    body: `**Email reply from ${from}:**\n\n${replyContent}`,
-  });
-
-  return NextResponse.json({ status: "commented", issueId: task.id });
+  return NextResponse.json({ status: "stored", id: email.id });
 }
