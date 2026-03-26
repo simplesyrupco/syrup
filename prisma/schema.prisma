@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Email {
+  id         String   @id @default(uuid())
+  from       String
+  subject    String
+  body       String
+  read       Boolean  @default(false)
+  receivedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([read])
+  @@index([receivedAt])
+}

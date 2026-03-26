@@ -1,19 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { kv } from "@vercel/kv";
+import { prisma } from "@/lib/db";
 import crypto from "crypto";
 
 const WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
-const INBOX_KEY = "email:inbox";
-const MAX_STORED = 100;
-
-interface StoredEmail {
-  id: string;
-  from: string;
-  subject: string;
-  body: string;
-  receivedAt: string;
-  read: boolean;
-}
 
 function parseReplyBody(text: string): string {
   if (!text) return "";
@@ -48,7 +37,6 @@ function verifySignature(
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
 
-  // Optional signature verification
   if (WEBHOOK_SECRET) {
     const svixId = request.headers.get("svix-id");
     const svixTimestamp = request.headers.get("svix-timestamp");
@@ -79,19 +67,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "empty reply" });
   }
 
-  const email: StoredEmail = {
-    id: crypto.randomUUID(),
-    from,
-    subject,
-    body: replyContent,
-    receivedAt: new Date().toISOString(),
-    read: false,
-  };
-
-  // Push to the front of the list
-  await kv.lpush(INBOX_KEY, JSON.stringify(email));
-  // Trim to keep only the most recent emails
-  await kv.ltrim(INBOX_KEY, 0, MAX_STORED - 1);
+  const email = await prisma.email.create({
+    data: {
+      from,
+      subject,
+      body: replyContent,
+    },
+  });
 
   return NextResponse.json({ status: "stored", id: email.id });
 }
