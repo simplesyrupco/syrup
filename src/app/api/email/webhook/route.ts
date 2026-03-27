@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import crypto from "crypto";
 
 const WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 function stripHtml(html: string): string {
   return html
@@ -26,42 +27,28 @@ function parseReplyBody(text: string): string {
   const lines = text.split("\n");
   const freshLines: string[] = [];
   for (const line of lines) {
-    // Stop at quoted reply markers
     if (/^On .+ wrote:$/i.test(line.trim())) break;
     if (/^-{3,}/.test(line.trim())) break;
-    // Skip individually quoted lines, but don't break — there may be fresh content after
     if (/^>{1}\s/.test(line.trim())) continue;
     freshLines.push(line);
   }
   const result = freshLines.join("\n").trim();
-  // If stripping removed everything, return the original (better to have noisy data than nothing)
   return result || text.trim();
 }
 
-function extractBody(data: Record<string, unknown>): string {
-  // Try multiple field names that Resend might use
-  const candidates = [
-    data.text,
-    data.body,
-    data.html,
-    data.plain_text,
-    data.content,
-    // Nested under email object
-    (data.email as Record<string, unknown>)?.text,
-    (data.email as Record<string, unknown>)?.html,
-    (data.email as Record<string, unknown>)?.body,
-  ];
+async function fetchReceivedEmail(emailId: string): Promise<{ text?: string; html?: string } | null> {
+  if (!RESEND_API_KEY) return null;
 
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      // If it looks like HTML, strip tags first
-      if (candidate.includes("<") && candidate.includes(">")) {
-        return stripHtml(candidate);
-      }
-      return candidate;
-    }
+  const res = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+  });
+
+  if (!res.ok) {
+    console.error(`Failed to fetch received email ${emailId}: ${res.status}`);
+    return null;
   }
-  return "";
+
+  return res.json();
 }
 
 function verifySignature(
@@ -107,16 +94,30 @@ export async function POST(request: NextRequest) {
   const data = (event.data || event) as Record<string, unknown>;
   const from = (data.from as string) || "unknown sender";
   const subject = (data.subject as string) || "(no subject)";
-  const rawText = extractBody(data);
-  const replyContent = parseReplyBody(rawText);
+  const emailId = data.email_id as string;
 
-  // Always store — even if parsing found nothing, store the raw event for debugging
+  // Fetch the full email content from Resend API
+  let bodyText = "";
+  if (emailId) {
+    const fullEmail = await fetchReceivedEmail(emailId);
+    if (fullEmail) {
+      if (fullEmail.text) {
+        bodyText = fullEmail.text;
+      } else if (fullEmail.html) {
+        bodyText = stripHtml(fullEmail.html);
+      }
+    }
+  }
+
+  const replyContent = parseReplyBody(bodyText);
+
   if (!replyContent) {
+    // Store raw metadata if we still couldn't get the body
     const email = await prisma.email.create({
       data: {
         from,
         subject,
-        body: `[raw payload — body extraction failed]\n\n${JSON.stringify(data, null, 2).substring(0, 2000)}`,
+        body: `[body fetch failed — email_id: ${emailId}]\n\n${JSON.stringify(data, null, 2).substring(0, 2000)}`,
       },
     });
     return NextResponse.json({ status: "stored_raw", id: email.id });
