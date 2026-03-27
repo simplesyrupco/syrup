@@ -3,8 +3,10 @@ import { resend, EMAIL_TO, EMAIL_FROM, EMAIL_REPLY_TO } from "@/lib/email/resend
 import {
   renderVitallyEmail,
   renderSideProjectEmail,
+  renderWeeklyAuditEmail,
   type VitallyEmailData,
   type SideProjectEmailData,
+  type WeeklyAuditEmailData,
 } from "@/lib/email/template";
 import { requireAuth } from "@/lib/auth";
 
@@ -14,8 +16,8 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const { type, data, subject: customSubject, html: customHtml } = body as {
-    type: "vitally" | "sideproject" | "test" | "custom";
-    data?: VitallyEmailData | SideProjectEmailData;
+    type: "vitally" | "sideproject" | "weekly-audit" | "test" | "custom";
+    data?: VitallyEmailData | SideProjectEmailData | WeeklyAuditEmailData;
     subject?: string;
     html?: string;
   };
@@ -57,9 +59,13 @@ export async function POST(request: NextRequest) {
     const result = renderSideProjectEmail(data as SideProjectEmailData);
     subject = result.subject;
     html = result.html;
+  } else if (type === "weekly-audit") {
+    const result = renderWeeklyAuditEmail(data as WeeklyAuditEmailData);
+    subject = result.subject;
+    html = result.html;
   } else {
     return NextResponse.json(
-      { error: `Unknown type: ${type}. Use: vitally, sideproject, test, or custom` },
+      { error: `Unknown type: ${type}. Use: vitally, sideproject, weekly-audit, test, or custom` },
       { status: 400 }
     );
   }

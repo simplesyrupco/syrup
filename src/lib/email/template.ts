@@ -340,3 +340,124 @@ export function renderSideProjectEmail(data: SideProjectEmailData): {
   const subject = `Side Projects — ${new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
   return { subject, html: emailWrapper(subject, body) };
 }
+
+// ── Weekly Priority Audit Email (Sunday 6pm) ────────────────────
+
+export interface WeeklyPriority {
+  title: string;
+  reasoning: string;
+  source?: string;
+  url?: string;
+}
+
+export interface SideProjectAction {
+  project: string;
+  action: string;
+  url?: string;
+}
+
+export interface ParkedIdea {
+  title: string;
+  reason?: string;
+}
+
+export interface WeeklyAuditEmailData {
+  weekOf?: string;
+  priorities?: WeeklyPriority[];
+  sideProject?: SideProjectAction;
+  parked?: ParkedIdea[];
+  sprintSummary?: string;
+}
+
+export function renderWeeklyAuditEmail(data: WeeklyAuditEmailData): {
+  subject: string;
+  html: string;
+} {
+  const {
+    weekOf,
+    priorities = [],
+    sideProject,
+    parked = [],
+    sprintSummary,
+  } = data;
+
+  const weekLabel =
+    weekOf ||
+    `Week of ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+
+  // Sprint summary (optional overview)
+  let sprintHtml = "";
+  if (sprintSummary) {
+    sprintHtml = sectionBlock(
+      COLORS.blue,
+      "Sprint Status",
+      `<p style="font-size:14px;color:#1F2937;margin:0;line-height:1.5;">${sprintSummary}</p>`
+    );
+  }
+
+  // Top priorities section
+  let prioritiesHtml = "";
+  if (priorities.length > 0) {
+    const rows = priorities
+      .map((p, i) => {
+        const sourceTag = p.source
+          ? `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#E0E7FF;color:#3730A3;margin-left:8px;">${p.source}</span>`
+          : "";
+        const label = p.url
+          ? `<a href="${p.url}" style="font-size:14px;font-weight:600;color:#1F2937;text-decoration:none;border-bottom:1px solid #E5E7EB;" target="_blank">${p.title}</a>`
+          : `<span style="font-size:14px;font-weight:600;color:#1F2937;">${p.title}</span>`;
+        return `
+          <div style="padding:8px 0;${i < priorities.length - 1 ? "border-bottom:1px solid #F3F4F6;" : ""}">
+            <div style="display:flex;align-items:baseline;">
+              <span style="font-size:18px;font-weight:700;color:${COLORS.amber};width:28px;flex-shrink:0;">${i + 1}</span>
+              <span>${label}${sourceTag}</span>
+            </div>
+            <div style="font-size:13px;color:#6B7280;margin-top:4px;padding-left:28px;">${p.reasoning}</div>
+          </div>`;
+      })
+      .join("");
+    prioritiesHtml = sectionBlock(COLORS.amber, "This Week's Priorities", rows);
+  } else {
+    prioritiesHtml = sectionBlock(
+      COLORS.amber,
+      "This Week's Priorities",
+      '<p style="font-size:13px;color:#9CA3AF;">No priorities set</p>'
+    );
+  }
+
+  // Side project next action
+  let sideProjectHtml = "";
+  if (sideProject) {
+    const nameEl = sideProject.url
+      ? `<a href="${sideProject.url}" style="font-size:14px;font-weight:600;color:#1F2937;text-decoration:none;border-bottom:1px solid #E5E7EB;" target="_blank">${sideProject.project}</a>`
+      : `<span style="font-size:14px;font-weight:600;color:#1F2937;">${sideProject.project}</span>`;
+    sideProjectHtml = sectionBlock(
+      COLORS.indigo,
+      "Side Project — One Next Action",
+      `<div>${nameEl}</div>
+       <div style="font-size:13px;color:#6B7280;margin-top:6px;">→ ${sideProject.action}</div>`
+    );
+  }
+
+  // Park these — ideas to ignore
+  let parkedHtml = "";
+  if (parked.length > 0) {
+    const rows = parked
+      .map(
+        (p) =>
+          `<div style="padding:4px 0;border-bottom:1px solid #F3F4F6;">
+            <span style="font-size:14px;color:#6B7280;">✗ ${p.title}</span>
+            ${p.reason ? `<span style="font-size:12px;color:#9CA3AF;margin-left:8px;">— ${p.reason}</span>` : ""}
+          </div>`
+      )
+      .join("");
+    parkedHtml = sectionBlock(COLORS.gray, "Park These — Ignore This Week", rows);
+  }
+
+  const body = [sprintHtml, prioritiesHtml, sideProjectHtml, parkedHtml]
+    .filter(Boolean)
+    .join("");
+
+  const subject = `Weekly Priority Audit — ${weekLabel}`;
+  return { subject, html: emailWrapper(subject, body) };
+}
