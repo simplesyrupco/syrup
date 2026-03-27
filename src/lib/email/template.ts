@@ -67,6 +67,15 @@ export interface SideProjectEmailData {
   recentlyCompleted?: Task[];
 }
 
+export interface GiveUpProcessEmailData {
+  projectName: string;
+  repo?: string;
+  daysSinceLastCommit?: number;
+  daysSinceLastTaskUpdate?: number;
+  lastCommitDate?: string;
+  lastCommitMessage?: string;
+}
+
 // ── Constants ────────────────────────────────────────────────────
 
 const COLORS = {
@@ -86,6 +95,26 @@ const PRIORITY_BADGES: Record<string, { bg: string; text: string; label: string 
   medium: { bg: "#E0E7FF", text: "#3730A3", label: "Medium" },
   low: { bg: "#F3F4F6", text: "#374151", label: "Low" },
   review: { bg: "#F3E8FF", text: "#6B21A8", label: "Review" },
+};
+
+const PRIORITY_RANK: Record<string, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
+const SHIPPING_STATUSES = new Set(["in progress", "in review", "to do"]);
+const BUSYWORK_KEYWORDS = [
+  "update docs", "rename", "cleanup", "clean up", "refactor",
+  "reorganize", "formatting", "lint", "tidy", "housekeeping",
+  "minor", "chore", "polish",
+];
+
+const TRIAGE_BADGES: Record<string, { bg: string; text: string; label: string }> = {
+  defer: { bg: "#F3F4F6", text: "#6B7280", label: "Defer" },
+  delegate: { bg: "#EDE9FE", text: "#6B21A8", label: "Delegate" },
+  busywork: { bg: "#FEF3C7", text: "#92400E", label: "Busywork" },
 };
 
 const STATUS_DOTS: Record<string, { color: string; label: string }> = {
@@ -163,6 +192,74 @@ function taskRow(
     </div>`;
 }
 
+// ── Sprint Triage ────────────────────────────────────────────────
+
+interface TriagedTask extends Task {
+  recommendation?: "defer" | "delegate" | "busywork";
+}
+
+function triageScore(task: Task): number {
+  const prio = PRIORITY_RANK[(task.priority || "medium").toLowerCase()] || 2;
+  const statusBoost =
+    task.status && SHIPPING_STATUSES.has(task.status.toLowerCase()) ? 1 : 0;
+  return prio + statusBoost;
+}
+
+function isBusywork(task: Task): boolean {
+  const text = task.summary.toLowerCase();
+  return BUSYWORK_KEYWORDS.some((kw) => text.includes(kw));
+}
+
+function triageTasks(tasks: Task[]): {
+  focus: Task[];
+  rest: TriagedTask[];
+} {
+  const scored = tasks
+    .map((t) => ({ task: t, score: triageScore(t), busy: isBusywork(t) }))
+    .sort((a, b) => b.score - a.score);
+
+  const focusCount = Math.min(3, Math.max(1, scored.filter((s) => s.score >= 4).length || 1));
+  const focus = scored.slice(0, focusCount).map((s) => s.task);
+  const rest: TriagedTask[] = scored.slice(focusCount).map((s) => {
+    const rec: TriagedTask["recommendation"] = s.busy
+      ? "busywork"
+      : s.score <= 2
+        ? "defer"
+        : "delegate";
+    return { ...s.task, recommendation: rec };
+  });
+
+  return { focus, rest };
+}
+
+function triageBadge(rec: TriagedTask["recommendation"]): string {
+  if (!rec) return "";
+  const b = TRIAGE_BADGES[rec];
+  return `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:${b.bg};color:${b.text};margin-left:8px;vertical-align:middle;">${b.label}</span>`;
+}
+
+function focusTaskRow(num: number, task: Task): string {
+  const priorityBadge = task.priority ? badge(task.priority.toLowerCase()) : "";
+  const label = task.url
+    ? `<a href="${task.url}" style="font-size:14px;color:#1F2937;font-weight:700;text-decoration:none;border-bottom:1px solid #E5E7EB;" target="_blank">${task.summary}</a>`
+    : `<span style="font-size:14px;color:#1F2937;font-weight:700;">${task.summary}</span>`;
+  return `
+    <div style="display:flex;align-items:baseline;padding:8px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:13px;font-weight:700;color:#3B82F6;width:24px;flex-shrink:0;">${num}</span>
+      <span style="flex:1;">${label}${priorityBadge}</span>
+    </div>`;
+}
+
+function deferredTaskRow(task: TriagedTask): string {
+  const label = task.url
+    ? `<a href="${task.url}" style="font-size:13px;color:#6B7280;text-decoration:none;border-bottom:1px solid #E5E7EB;" target="_blank">${task.summary}</a>`
+    : `<span style="font-size:13px;color:#6B7280;">${task.summary}</span>`;
+  return `
+    <div style="display:flex;align-items:baseline;padding:4px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="flex:1;">${label}${triageBadge(task.recommendation)}</span>
+    </div>`;
+}
+
 function emailWrapper(
   subject: string,
   bodyContent: string,
@@ -207,12 +304,52 @@ export function renderVitallyEmail(data: VitallyEmailData): {
       <span style="font-size:13px;color:#6B7280;">${daysRemaining} days remaining</span>
     </div>`;
 
-  const taskRows = tasks
-    .map((t, i) => taskRow(i + 1, t.summary, t.priority, t.status, t.url))
-    .join("");
-  const tasksContent =
-    taskRows ||
-    '<p style="font-size:13px;color:#9CA3AF;">No tasks in sprint</p>';
+  const useTriage = tasks.length > 5;
+
+  let tasksSectionHtml: string;
+  let triageRestHtml = "";
+  let busyworkCallout = "";
+
+  if (useTriage) {
+    const { focus, rest } = triageTasks(tasks);
+
+    const focusRows = focus
+      .map((t, i) => focusTaskRow(i + 1, t))
+      .join("");
+    tasksSectionHtml = sectionBlock(
+      COLORS.blue,
+      `Focus — ${focus.length} item${focus.length > 1 ? "s" : ""} that move the needle`,
+      focusRows
+    );
+
+    if (rest.length > 0) {
+      const restRows = rest.map((t) => deferredTaskRow(t)).join("");
+      triageRestHtml = sectionBlock(
+        COLORS.gray,
+        "Everything Else",
+        restRows
+      );
+    }
+
+    const busyworkItems = rest.filter((t) => t.recommendation === "busywork");
+    if (busyworkItems.length > 0) {
+      const names = busyworkItems.map((t) => `"${t.summary}"`).join(", ");
+      busyworkCallout = sectionBlock(
+        COLORS.amber,
+        "Busywork Alert",
+        `<div style="font-size:13px;color:#92400E;">${names} feel${busyworkItems.length === 1 ? "s" : ""} productive but won't ship anything. Skip or timebox.</div>`
+      );
+    }
+  } else {
+    const taskRows = tasks
+      .map((t, i) => taskRow(i + 1, t.summary, t.priority, t.status, t.url))
+      .join("");
+    tasksSectionHtml = sectionBlock(
+      COLORS.amber,
+      "Today's Tasks",
+      taskRows || '<p style="font-size:13px;color:#9CA3AF;">No tasks in sprint</p>'
+    );
+  }
 
   let blockerHtml = "";
   if (blockers.length > 0) {
@@ -248,7 +385,9 @@ export function renderVitallyEmail(data: VitallyEmailData): {
 
   const body = [
     sectionBlock(COLORS.blue, `Sprint — ${sprintName}`, sprintContent),
-    sectionBlock(COLORS.amber, "Today's Tasks", tasksContent),
+    tasksSectionHtml,
+    busyworkCallout,
+    triageRestHtml,
     blockerHtml,
     prHtml,
   ]
@@ -338,6 +477,113 @@ export function renderSideProjectEmail(data: SideProjectEmailData): {
     .join("");
 
   const subject = `Side Projects — ${new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+  return { subject, html: emailWrapper(subject, body) };
+}
+
+// ── Give-Up Process Email ────────────────────────────────────────
+
+function giveUpQuestion(
+  num: number,
+  question: string,
+  guidance: string,
+  color: string
+): string {
+  return `
+    <div style="display:flex;align-items:flex-start;padding:12px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:20px;font-weight:700;color:${color};width:32px;flex-shrink:0;">${num}</span>
+      <div style="flex:1;">
+        <div style="font-size:16px;font-weight:700;color:#1F2937;margin-bottom:4px;">${question}</div>
+        <div style="font-size:13px;color:#6B7280;line-height:1.5;">${guidance}</div>
+      </div>
+    </div>`;
+}
+
+export function renderGiveUpProcessEmail(data: GiveUpProcessEmailData): {
+  subject: string;
+  html: string;
+} {
+  const {
+    projectName,
+    repo,
+    daysSinceLastCommit,
+    daysSinceLastTaskUpdate,
+    lastCommitDate,
+    lastCommitMessage,
+  } = data;
+
+  const staleDays = daysSinceLastCommit ?? daysSinceLastTaskUpdate ?? 14;
+
+  const staleSummary = [
+    daysSinceLastCommit != null
+      ? `${daysSinceLastCommit} days since last commit`
+      : null,
+    daysSinceLastTaskUpdate != null
+      ? `${daysSinceLastTaskUpdate} days since last task update`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" &middot; ");
+
+  const lastCommitInfo =
+    lastCommitDate || lastCommitMessage
+      ? `<div style="font-size:12px;color:#9CA3AF;margin-top:4px;">${
+          lastCommitMessage
+            ? `Last commit: "${lastCommitMessage}"`
+            : ""
+        }${lastCommitDate ? ` on ${lastCommitDate}` : ""}</div>`
+      : "";
+
+  const alertContent = `
+    <div style="font-size:14px;color:#991B1B;font-weight:600;margin-bottom:4px;">
+      ${projectName} has been idle for ${staleDays} days.
+    </div>
+    <div style="font-size:13px;color:#6B7280;">
+      ${staleSummary}${repo ? ` &middot; ${repo}` : ""}
+    </div>
+    ${lastCommitInfo}`;
+
+  const questionsContent = [
+    giveUpQuestion(
+      1,
+      "Bored?",
+      "Not a valid reason to quit. Boredom is the middle of every project. Push through to the other side.",
+      COLORS.amber
+    ),
+    giveUpQuestion(
+      2,
+      "Bad idea?",
+      "Valid reason. Document why it failed, what you learned, and close it. No shame in killing a bad bet early.",
+      COLORS.teal
+    ),
+    giveUpQuestion(
+      3,
+      "Better project waiting?",
+      "Requires real reasoning, not shiny-object energy. Write down specifically what makes the new project better and what makes this one worse.",
+      COLORS.purple
+    ),
+  ].join("");
+
+  const outcomeContent = `
+    <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:13px;font-weight:600;color:${COLORS.blue};">Recommit</span>
+      <span style="font-size:13px;color:#6B7280;margin-left:8px;">Reset the clock. Pick one next action and do it today.</span>
+    </div>
+    <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:13px;font-weight:600;color:${COLORS.red};">Give Up</span>
+      <span style="font-size:13px;color:#6B7280;margin-left:8px;">Archive the repo. Write a post-mortem. Move on.</span>
+    </div>
+    <div style="padding:6px 0;">
+      <span style="font-size:13px;font-weight:600;color:${COLORS.amber};">Pause</span>
+      <span style="font-size:13px;color:#6B7280;margin-left:8px;">Set a hard restart date. If you don't restart by then, it's dead.</span>
+    </div>`;
+
+  const body = [
+    sectionBlock(COLORS.red, "Stale Project Alert", alertContent),
+    sectionBlock(COLORS.indigo, "The Give-Up Process", questionsContent),
+    sectionBlock(COLORS.gray, "Your Options", outcomeContent),
+  ].join("");
+
+  const subject = `Give-Up Process — ${projectName}`;
   return { subject, html: emailWrapper(subject, body) };
 }
 
