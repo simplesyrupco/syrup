@@ -67,6 +67,15 @@ export interface SideProjectEmailData {
   recentlyCompleted?: Task[];
 }
 
+export interface GiveUpProcessEmailData {
+  projectName: string;
+  repo?: string;
+  daysSinceLastCommit?: number;
+  daysSinceLastTaskUpdate?: number;
+  lastCommitDate?: string;
+  lastCommitMessage?: string;
+}
+
 // ── Constants ────────────────────────────────────────────────────
 
 const COLORS = {
@@ -468,5 +477,112 @@ export function renderSideProjectEmail(data: SideProjectEmailData): {
     .join("");
 
   const subject = `Side Projects — ${new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+  return { subject, html: emailWrapper(subject, body) };
+}
+
+// ── Give-Up Process Email ────────────────────────────────────────
+
+function giveUpQuestion(
+  num: number,
+  question: string,
+  guidance: string,
+  color: string
+): string {
+  return `
+    <div style="display:flex;align-items:flex-start;padding:12px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:20px;font-weight:700;color:${color};width:32px;flex-shrink:0;">${num}</span>
+      <div style="flex:1;">
+        <div style="font-size:16px;font-weight:700;color:#1F2937;margin-bottom:4px;">${question}</div>
+        <div style="font-size:13px;color:#6B7280;line-height:1.5;">${guidance}</div>
+      </div>
+    </div>`;
+}
+
+export function renderGiveUpProcessEmail(data: GiveUpProcessEmailData): {
+  subject: string;
+  html: string;
+} {
+  const {
+    projectName,
+    repo,
+    daysSinceLastCommit,
+    daysSinceLastTaskUpdate,
+    lastCommitDate,
+    lastCommitMessage,
+  } = data;
+
+  const staleDays = daysSinceLastCommit ?? daysSinceLastTaskUpdate ?? 14;
+
+  const staleSummary = [
+    daysSinceLastCommit != null
+      ? `${daysSinceLastCommit} days since last commit`
+      : null,
+    daysSinceLastTaskUpdate != null
+      ? `${daysSinceLastTaskUpdate} days since last task update`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" &middot; ");
+
+  const lastCommitInfo =
+    lastCommitDate || lastCommitMessage
+      ? `<div style="font-size:12px;color:#9CA3AF;margin-top:4px;">${
+          lastCommitMessage
+            ? `Last commit: "${lastCommitMessage}"`
+            : ""
+        }${lastCommitDate ? ` on ${lastCommitDate}` : ""}</div>`
+      : "";
+
+  const alertContent = `
+    <div style="font-size:14px;color:#991B1B;font-weight:600;margin-bottom:4px;">
+      ${projectName} has been idle for ${staleDays} days.
+    </div>
+    <div style="font-size:13px;color:#6B7280;">
+      ${staleSummary}${repo ? ` &middot; ${repo}` : ""}
+    </div>
+    ${lastCommitInfo}`;
+
+  const questionsContent = [
+    giveUpQuestion(
+      1,
+      "Bored?",
+      "Not a valid reason to quit. Boredom is the middle of every project. Push through to the other side.",
+      COLORS.amber
+    ),
+    giveUpQuestion(
+      2,
+      "Bad idea?",
+      "Valid reason. Document why it failed, what you learned, and close it. No shame in killing a bad bet early.",
+      COLORS.teal
+    ),
+    giveUpQuestion(
+      3,
+      "Better project waiting?",
+      "Requires real reasoning, not shiny-object energy. Write down specifically what makes the new project better and what makes this one worse.",
+      COLORS.purple
+    ),
+  ].join("");
+
+  const outcomeContent = `
+    <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:13px;font-weight:600;color:${COLORS.blue};">Recommit</span>
+      <span style="font-size:13px;color:#6B7280;margin-left:8px;">Reset the clock. Pick one next action and do it today.</span>
+    </div>
+    <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+      <span style="font-size:13px;font-weight:600;color:${COLORS.red};">Give Up</span>
+      <span style="font-size:13px;color:#6B7280;margin-left:8px;">Archive the repo. Write a post-mortem. Move on.</span>
+    </div>
+    <div style="padding:6px 0;">
+      <span style="font-size:13px;font-weight:600;color:${COLORS.amber};">Pause</span>
+      <span style="font-size:13px;color:#6B7280;margin-left:8px;">Set a hard restart date. If you don't restart by then, it's dead.</span>
+    </div>`;
+
+  const body = [
+    sectionBlock(COLORS.red, "Stale Project Alert", alertContent),
+    sectionBlock(COLORS.indigo, "The Give-Up Process", questionsContent),
+    sectionBlock(COLORS.gray, "Your Options", outcomeContent),
+  ].join("");
+
+  const subject = `Give-Up Process — ${projectName}`;
   return { subject, html: emailWrapper(subject, body) };
 }
