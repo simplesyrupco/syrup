@@ -13,15 +13,26 @@ export async function POST(request: NextRequest) {
   if (authError) return authError;
 
   const body = await request.json();
-  const { type, data } = body as {
-    type: "vitally" | "sideproject" | "test";
+  const { type, data, subject: customSubject, html: customHtml } = body as {
+    type: "vitally" | "sideproject" | "test" | "custom";
     data?: VitallyEmailData | SideProjectEmailData;
+    subject?: string;
+    html?: string;
   };
 
   let subject: string;
   let html: string;
 
-  if (type === "test") {
+  if (type === "custom") {
+    if (!customSubject || !customHtml) {
+      return NextResponse.json(
+        { error: "Custom type requires 'subject' and 'html' fields" },
+        { status: 400 }
+      );
+    }
+    subject = customSubject;
+    html = customHtml;
+  } else if (type === "test") {
     const result = renderVitallyEmail({
       sprint: { name: "Sprint 42", completed: 7, total: 12, daysRemaining: 5 },
       tasks: [
@@ -48,7 +59,7 @@ export async function POST(request: NextRequest) {
     html = result.html;
   } else {
     return NextResponse.json(
-      { error: `Unknown type: ${type}. Use: vitally, sideproject, or test` },
+      { error: `Unknown type: ${type}. Use: vitally, sideproject, test, or custom` },
       { status: 400 }
     );
   }
