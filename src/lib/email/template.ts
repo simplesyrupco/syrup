@@ -341,6 +341,89 @@ export function renderSideProjectEmail(data: SideProjectEmailData): {
   return { subject, html: emailWrapper(subject, body) };
 }
 
+// ── Give-Up Process Email ───────────────────────────────────────
+
+export interface StaleRepo {
+  name: string;
+  daysSinceCommit: number;
+  lastCommitMessage?: string;
+  url?: string;
+}
+
+export interface GiveUpEmailData {
+  staleRepos: StaleRepo[];
+}
+
+export function renderGiveUpEmail(data: GiveUpEmailData): {
+  subject: string;
+  html: string;
+} {
+  const { staleRepos } = data;
+
+  const introContent = `
+    <p style="font-size:14px;color:#1F2937;margin:0 0 8px;line-height:1.6;">
+      The following side projects have had no commits for 14+ days. For each one, answer the three questions below to decide what happens next.
+    </p>`;
+
+  const repoRows = staleRepos
+    .map((r) => {
+      const nameEl = r.url
+        ? `<a href="${r.url}" style="font-size:15px;font-weight:600;color:#1F2937;text-decoration:none;border-bottom:1px solid #E5E7EB;" target="_blank">${r.name}</a>`
+        : `<span style="font-size:15px;font-weight:600;color:#1F2937;">${r.name}</span>`;
+      return `
+        <div style="padding:10px 0;border-bottom:1px solid #F3F4F6;">
+          <div>${nameEl}</div>
+          <div style="font-size:12px;color:#9CA3AF;margin-top:4px;">${r.daysSinceCommit} days idle${r.lastCommitMessage ? ` · last: "${r.lastCommitMessage}"` : ""}</div>
+        </div>`;
+    })
+    .join("");
+
+  const questionsContent = `
+    <div style="padding:4px 0;">
+      <div style="font-size:14px;color:#1F2937;font-weight:600;margin-bottom:8px;">For each project above, ask yourself:</div>
+      <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+        <span style="font-size:18px;font-weight:700;color:${COLORS.amber};width:28px;display:inline-block;">1</span>
+        <span style="font-size:14px;color:#1F2937;font-weight:600;">Bored?</span>
+        <div style="font-size:13px;color:#6B7280;margin-top:2px;padding-left:28px;">Lost interest — the idea doesn't excite you anymore.</div>
+      </div>
+      <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+        <span style="font-size:18px;font-weight:700;color:${COLORS.amber};width:28px;display:inline-block;">2</span>
+        <span style="font-size:14px;color:#1F2937;font-weight:600;">Bad idea?</span>
+        <div style="font-size:13px;color:#6B7280;margin-top:2px;padding-left:28px;">The concept is flawed or the market doesn't exist.</div>
+      </div>
+      <div style="padding:6px 0;">
+        <span style="font-size:18px;font-weight:700;color:${COLORS.amber};width:28px;display:inline-block;">3</span>
+        <span style="font-size:14px;color:#1F2937;font-weight:600;">Better project waiting?</span>
+        <div style="font-size:13px;color:#6B7280;margin-top:2px;padding-left:28px;">Something else has your energy — this one lost the competition.</div>
+      </div>
+    </div>`;
+
+  const outcomesContent = `
+    <div style="padding:4px 0;">
+      <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+        <span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#DCFCE7;color:#166534;margin-right:8px;">Recommit</span>
+        <span style="font-size:14px;color:#1F2937;">Reset the clock — commit to a next action this week.</span>
+      </div>
+      <div style="padding:6px 0;border-bottom:1px solid #F3F4F6;">
+        <span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#FEE2E2;color:#991B1B;margin-right:8px;">Give up</span>
+        <span style="font-size:14px;color:#1F2937;">Archive it. No guilt. Move on.</span>
+      </div>
+      <div style="padding:6px 0;">
+        <span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:#FEF3C7;color:#92400E;margin-right:8px;">Pause</span>
+        <span style="font-size:14px;color:#1F2937;">Set a hard restart date — if you don't pick it back up, it auto-archives.</span>
+      </div>
+    </div>`;
+
+  const body = [
+    sectionBlock(COLORS.rose, "Stale Side Projects", introContent + repoRows),
+    sectionBlock(COLORS.amber, "The Three Questions", questionsContent),
+    sectionBlock(COLORS.teal, "Your Options", outcomesContent),
+  ].join("");
+
+  const subject = `Give-Up Process — ${staleRepos.length} project${staleRepos.length === 1 ? "" : "s"} need a decision`;
+  return { subject, html: emailWrapper(subject, body) };
+}
+
 // ── Weekly Priority Audit Email (Sunday 6pm) ────────────────────
 
 export interface WeeklyPriority {
